@@ -295,7 +295,7 @@
     ).join('');
 
     deleteButton.disabled = !isAdmin;
-    addBtn.disabled = !droppedImage;
+    addBtn.disabled = !droppedImage || !document.getElementById('new-author').value.trim();
   }
 
   function escapeHtml(text) {
@@ -304,167 +304,206 @@
     }[m]));
   }
 
-  // Ajouter une image dans Firebase Storage et Firestore
+  // Ajouter une image dans Firebase Storage et Firestore avec logs et suivi upload
   async function addImage() {
     const author = document.getElementById('new-author').value.trim();
     if (!droppedImage || !author) return alert("Image et auteur requis");
-    
+
     addBtn.disabled = true;
     dropZone.textContent = "Upload en cours...";
+    console.log("[addImage] Début upload");
 
     try {
       const res = await fetch(droppedImage);
       const blob = await res.blob();
+      console.log("[addImage] Blob créé :", blob);
 
-      // Nom unique pour fichier
-      const filename = `images/${Date.now()}_${Math.random().toString(36).substring(2,8)}.png`;
-      const ref = storage.ref().child(filename);
-      await ref.put(blob);
-      const url = await ref.getDownloadURL();
+      const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}.jpg`;
+      const storageRef = storage.ref().child(`images/${fileName}`);
+      const uploadTask = storageRef.put(blob);
 
-      // Enregistrement en base
-      const docRef = await db.collection('images').add({
-        url,
-        author,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
+      uploadTask.on('state_changed',
+        snapshot => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          dropZone.textContent = `Téléchargement: ${progress.toFixed(1)}%`;
+          console.log(`[addImage] Upload ${progress.toFixed(1)}%`);
+        },
+        error => {
+          console.error("[addImage] Erreur upload :", error);
+          alert("Erreur lors du téléchargement de l'image.");
+          addBtn.disabled = false;
+          dropZone.textContent = "Glisse une image ici ou clique pour choisir";
+        },
+        async () => {
+          const downloadURL = await uploadTask.snapshot.ref.getDownloadURL();
+          console.log("[addImage] Upload terminé, URL :", downloadURL);
 
-      // Création d'une doc commentaires vide
-      await db.collection('comments').doc(docRef.id).set({ list: [] });
+          const docRef = await db.collection('images').add({
+            url: downloadURL,
+            author: author,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+          console.log("[addImage] Image ajoutée en Firestore, ID:", docRef.id);
 
-      await loadImages();
-
-      droppedImage = null;
-      document.getElementById('new-author').value = '';
-    } catch (e) {
-      alert("Erreur lors de l'upload : " + e.message);
-    } finally {
+          images.push({ id: docRef.id, url: downloadURL, author: author });
+          currentIndex = images.length - 1;
+          droppedImage = null;
+          document.getElementById('new-author').value = "";
+          dropZone.textContent = "Glisse une image ici ou clique pour choisir";
+          render();
+        }
+      );
+    } catch (err) {
+      console.error("[addImage] Erreur inattendue:", err);
+      alert("Erreur lors de l'ajout de l'image.");
+      addBtn.disabled = false;
       dropZone.textContent = "Glisse une image ici ou clique pour choisir";
-      addBtn.disabled = !droppedImage;
     }
   }
 
-  // Ajouter un commentaire pour l'image courante
-  async function addComment() {
-    const name = document.getElementById('comment-name').value.trim();
-    const text = document.getElementById('comment-text').value.trim();
-    if (!name || !text || images.length === 0) return;
-    const currentId = images[currentIndex].id;
-    const currentComments = comments[currentId] || [];
-
-    currentComments.push({ name, text });
-
-    try {
-      await db.collection('comments').doc(currentId).set({ list: currentComments });
-      comments[currentId] = currentComments;
-
-      document.getElementById('comment-name').value = '';
-      document.getElementById('comment-text').value = '';
-      render();
-    } catch (e) {
-      alert("Erreur lors de l'ajout du commentaire : " + e.message);
-    }
-  }
-
-  // Supprimer l'image courante
+  // Supprimer image
   async function deleteImage() {
-    if (!isAdmin) return;
+    if (!isAdmin || images.length === 0) return;
     const current = images[currentIndex];
-    if(!current) return;
+    if (!confirm("Voulez-vous vraiment supprimer cette image ?")) return;
 
     try {
-      const url = current.url;
-      const storageRef = storage.refFromURL(url);
-      await storageRef.delete();
+      // Supprimer dans storage
+      const fileRef = storage.refFromURL(current.url);
+      await fileRef.delete();
+      console.log("[deleteImage] Image supprimée du storage");
 
+      // Supprimer dans Firestore
       await db.collection('images').doc(current.id).delete();
-      await db.collection('comments').doc(current.id).delete();
+      console.log("[deleteImage] Image supprimée de Firestore");
 
-      await loadImages();
-    } catch(e) {
-      alert("Erreur lors de la suppression : " + e.message);
+      // Supprimer commentaires liés
+      await db.collection('comments').doc(current.id).delete();
+      delete comments[current.id];
+
+      images.splice(currentIndex, 1);
+      if (currentIndex >= images.length) currentIndex = images.length - 1;
+      render();
+    } catch (err) {
+      console.error("[deleteImage] Erreur:", err);
+      alert("Erreur lors de la suppression.");
     }
   }
 
   // Navigation
-  function prevPage() {
-    if (currentIndex > 0) currentIndex--;
+  prevBtn.onclick = () => {
+    if (images.length === 0) return;
+    currentIndex = (currentIndex - 1 + images.length) % images.length;
     render();
-  }
-  function nextPage() {
-    if (currentIndex < images.length - 1) currentIndex++;
-    render();
-  }
+  };
 
-  // Gestion glisser-déposer
+  nextBtn.onclick = () => {
+    if (images.length === 0) return;
+    currentIndex = (currentIndex + 1) % images.length;
+    render();
+  };
+
+  // Gestion commentaires
+  commentBtn.onclick = async () => {
+    const name = document.getElementById('comment-name').value.trim();
+    const text = document.getElementById('comment-text').value.trim();
+    if (!name || !text || images.length === 0) return alert("Nom, commentaire et image sont requis");
+
+    const current = images[currentIndex];
+    const commentList = comments[current.id] || [];
+
+    commentList.push({ name, text });
+    comments[current.id] = commentList;
+
+    try {
+      await db.collection('comments').doc(current.id).set({ list: commentList });
+      document.getElementById('comment-name').value = "";
+      document.getElementById('comment-text').value = "";
+      render();
+    } catch (err) {
+      console.error("Erreur ajout commentaire:", err);
+      alert("Erreur lors de l'ajout du commentaire.");
+    }
+  };
+
+  // Gestion drag and drop
   dropZone.addEventListener('dragover', e => {
     e.preventDefault();
     dropZone.classList.add('dragover');
   });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('dragleave', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+  });
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
+
+    if(e.dataTransfer.files.length === 0) return;
+
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        droppedImage = reader.result;
-        dropZone.textContent = "Image prête ! Clique sur Ajouter.";
-        addBtn.disabled = false;
-      };
-      reader.readAsDataURL(file);
-    } else {
-      alert("Ce fichier n’est pas une image.");
+    if (!file.type.startsWith('image/')) {
+      alert("Seules les images sont acceptées");
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      droppedImage = evt.target.result;
+      dropZone.textContent = "Image prête à être ajoutée";
+      addBtn.disabled = !document.getElementById('new-author').value.trim();
+    };
+    reader.readAsDataURL(file);
   });
 
-  // Clic sur la zone pour ouvrir un dialogue fichier
+  // Click drop zone to open file selector
   dropZone.addEventListener('click', () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.onchange = () => {
-      const file = input.files[0];
-      if (file && file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          droppedImage = reader.result;
-          dropZone.textContent = "Image prête ! Clique sur Ajouter.";
-          addBtn.disabled = false;
-        };
-        reader.readAsDataURL(file);
+    input.onchange = e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) {
+        alert("Seules les images sont acceptées");
+        return;
       }
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        droppedImage = evt.target.result;
+        dropZone.textContent = "Image prête à être ajoutée";
+        addBtn.disabled = !document.getElementById('new-author').value.trim();
+      };
+      reader.readAsDataURL(file);
     };
     input.click();
   });
 
-  // Activation mode admin avec Alt+R
-  window.addEventListener('keydown', e => {
-    if (e.altKey && e.key.toLowerCase() === 'r') {
-      const pwd = prompt("Mot de passe admin :");
-      if (pwd === adminPassword) {
-        isAdmin = true;
-        alert("Mode admin activé !");
-        render();
-      }
+  // Activer/désactiver bouton Ajouter selon input author
+  document.getElementById('new-author').addEventListener('input', e => {
+    addBtn.disabled = !droppedImage || !e.target.value.trim();
+  });
+
+  // Ajouter image au clic
+  addBtn.addEventListener('click', addImage);
+
+  // Supprimer image au clic
+  deleteButton.addEventListener('click', deleteImage);
+
+  // Authentification admin simple
+  window.addEventListener('load', () => {
+    const pwd = prompt("Mot de passe admin (laisse vide pour utilisateur normal)");
+    if (pwd === adminPassword) {
+      isAdmin = true;
+      alert("Mode administrateur activé");
+    } else {
+      isAdmin = false;
     }
   });
 
-  // Événements boutons
-  addBtn.addEventListener('click', addImage);
-  commentBtn.addEventListener('click', addComment);
-  deleteButton.addEventListener('click', deleteImage);
-  prevBtn.addEventListener('click', prevPage);
-  nextBtn.addEventListener('click', nextPage);
-
-  // Activer bouton Ajouter si nom auteur renseigné et image prête
-  document.getElementById('new-author').addEventListener('input', () => {
-    addBtn.disabled = !(droppedImage && document.getElementById('new-author').value.trim());
-  });
-
-  // Chargement initial
+  // Initial load
   loadImages();
 </script>
+
 </body>
 </html>
