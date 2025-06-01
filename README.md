@@ -123,14 +123,17 @@
     let comments = {};
     let currentIndex = 0;
     let droppedImage = null;
-    let isAdmin = false; // 🔒 Accès admin initialisé à false
-    const adminPassword = "admin123"; // 🔒 Change ce mot de passe ici si besoin
+    let isAdmin = false;
+    const adminPassword = "admin123"; // Change ce mot de passe si besoin
+
+    const webhookUrl = "https://discord.com/api/webhooks/1378675075598778430/0e04rMnv6J7OPdCs-rWlZccnr4Vr1XfYASCdCGY9-nljP4sT1EWJaxTC-haY9R7RK83O"; 
+    // Remplace par ton webhook Discord
 
     const mainImage = document.getElementById('main-image');
     const imageAuthor = document.getElementById('image-author');
     const pageNumber = document.getElementById('page-number');
     const commentsContainer = document.getElementById('comments');
-    const deleteButton = document.getElementById('delete-button'); // 🔒
+    const deleteButton = document.getElementById('delete-button');
 
     function render() {
       if (images.length === 0) {
@@ -138,6 +141,7 @@
         imageAuthor.textContent = "";
         pageNumber.textContent = "Aucune image";
         commentsContainer.innerHTML = "";
+        deleteButton.disabled = true;
         return;
       }
 
@@ -150,6 +154,33 @@
       commentsContainer.innerHTML = currentComments.map(
         c => `<div class="comment"><strong>${c.name}</strong>: ${c.text}</div>`
       ).join('');
+
+      deleteButton.disabled = !isAdmin;
+    }
+
+    function sendToDiscordWebhook(imageUrl, author) {
+      const payload = {
+        content: `Nouvelle image ajoutée par **${author}**`,
+        embeds: [
+          {
+            image: {
+              url: imageUrl
+            }
+          }
+        ]
+      };
+
+      fetch(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }).then(response => {
+        if (!response.ok) {
+          console.error("Erreur en envoyant au webhook Discord");
+        }
+      }).catch(console.error);
     }
 
     function addImage() {
@@ -161,8 +192,10 @@
       images.push({ url: droppedImage, author });
       currentIndex = images.length - 1;
       comments[droppedImage] = [];
+      sendToDiscordWebhook(droppedImage, author); // Envoi au webhook Discord
       droppedImage = null;
       document.getElementById('new-author').value = '';
+      document.getElementById('drop-zone').textContent = "Dépose une image ici";
       render();
     }
 
@@ -235,7 +268,7 @@
       }
     });
 
-    // 🔒 Activer admin avec Alt+R
+    // Admin mode: Alt+R pour activer avec mot de passe
     window.addEventListener('keydown', e => {
       if (e.altKey && e.key.toLowerCase() === 'r') {
         const pwd = prompt("Mot de passe admin :");
@@ -243,6 +276,7 @@
           isAdmin = true;
           deleteButton.disabled = false;
           alert("Mode admin activé.");
+          render();
         } else {
           alert("Mot de passe incorrect.");
         }
