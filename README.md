@@ -164,198 +164,134 @@
   </div>
 
 <script>
-  const IMGUR_CLIENT_ID = "bf8f7df1ccfb23a";
-  const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1378675075598778430/0e04rMnv6J7OPdCs-rWlZccnr4Vr1XfYASCdCGY9-nljP4sT1EWJaxTC-haY9R7RK83O";
+const IMGUR_CLIENT_ID = "bf8f7df1ccfb23a";
+const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1378675075598778430/0e04rMnv6J7OPdCs-rWlZccnr4Vr1XfYASCdCGY9-nljP4sT1EWJaxTC-haY9R7RK83O";
 
-  let images = [];
-  let comments = {};
-  let currentIndex = 0;
-  let droppedImage = null;
-  let uploadedImageUrl = null;
-  let isAdmin = false;
-  const adminPassword = "admin123";
+let images = JSON.parse(localStorage.getItem("images")) || [];
+let comments = JSON.parse(localStorage.getItem("comments")) || {};
+let currentIndex = 0;
+let droppedImage = null;
+let uploadedImageUrl = null;
+let isAdmin = false;
+const adminPassword = "admin123";
 
-  const dropZone = document.getElementById('drop-zone');
-  const addBtn = document.getElementById('add-btn');
-  const mainImage = document.getElementById('main-image');
-  const imageAuthor = document.getElementById('image-author');
-  const pageNumber = document.getElementById('page-number');
-  const commentsContainer = document.getElementById('comments');
-  const deleteButton = document.getElementById('delete-button');
-  const prevBtn = document.getElementById('prev-btn');
-  const nextBtn = document.getElementById('next-btn');
-  const commentBtn = document.getElementById('comment-btn');
+const dropZone = document.getElementById('drop-zone');
+const addBtn = document.getElementById('add-btn');
+const mainImage = document.getElementById('main-image');
+const imageAuthor = document.getElementById('image-author');
+const pageNumber = document.getElementById('page-number');
+const commentsContainer = document.getElementById('comments');
+const deleteButton = document.getElementById('delete-button');
+const prevBtn = document.getElementById('prev-btn');
+const nextBtn = document.getElementById('next-btn');
+const commentBtn = document.getElementById('comment-btn');
 
-  // Affiche la galerie + commentaires
-  function render() {
-    if (images.length === 0) {
-      mainImage.src = "";
-      imageAuthor.textContent = "";
-      pageNumber.textContent = "Aucune image";
-      commentsContainer.innerHTML = "";
-      deleteButton.disabled = true;
-      addBtn.disabled = !droppedImage;
-      return;
-    }
-    const current = images[currentIndex];
-    mainImage.src = current.url;
-    imageAuthor.textContent = current.author;
-    pageNumber.textContent = `Page ${currentIndex + 1} / ${images.length}`;
-
-    const currentComments = comments[current.url] || [];
-    commentsContainer.innerHTML = currentComments.map(
-      c => `<div class="comment"><strong>${escapeHtml(c.name)}</strong>: ${escapeHtml(c.text)}</div>`
-    ).join('');
-    deleteButton.disabled = !isAdmin;
-    addBtn.disabled = !!droppedImage; // Disable add if already have dropped image to add
+function render() {
+  if (images.length === 0) {
+    mainImage.src = "";
+    imageAuthor.textContent = "";
+    pageNumber.textContent = "Aucune image";
+    commentsContainer.innerHTML = "";
+    deleteButton.disabled = true;
+    addBtn.disabled = !droppedImage;
+    return;
   }
+  const current = images[currentIndex];
+  mainImage.src = current.url;
+  imageAuthor.textContent = current.author;
+  pageNumber.textContent = `Page ${currentIndex + 1} / ${images.length}`;
+  const currentComments = comments[current.url] || [];
+  commentsContainer.innerHTML = currentComments.map(
+    c => `<div class="comment"><strong>${escapeHtml(c.name)}</strong>: ${escapeHtml(c.text)}</div>`
+  ).join('');
+  deleteButton.disabled = !isAdmin;
+}
 
-  // Sécurise texte pour éviter injection HTML
-  function escapeHtml(text) {
-    return text.replace(/[&<>"']/g, m => {
-      return {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-      }[m];
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+
+async function uploadToImgur(base64Data) {
+  try {
+    const response = await fetch('https://api.imgur.com/3/image', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Client-ID ' + IMGUR_CLIENT_ID,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        image: base64Data.split(',')[1],
+        type: 'base64'
+      })
     });
+    const data = await response.json();
+    return data.success ? data.data.link : null;
+  } catch {
+    return null;
   }
+}
 
-  // Upload image sur Imgur et récupère URL
-  async function uploadToImgur(base64Data) {
-    try {
-      const response = await fetch('https://api.imgur.com/3/image', {
-        method: 'POST',
-        headers: {
-          Authorization: 'Client-ID ' + IMGUR_CLIENT_ID,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          image: base64Data.split(',')[1], // Supprime data:image/...;base64,
-          type: 'base64'
-        })
-      });
-      const data = await response.json();
-      if (data.success) {
-        return data.data.link;
-      } else {
-        alert("Erreur lors de l'upload Imgur: " + (data.data.error || 'Erreur inconnue'));
-        return null;
-      }
-    } catch (e) {
-      alert("Erreur réseau ou API Imgur");
-      return null;
-    }
+async function sendToDiscord(url, author) {
+  try {
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `📸 Nouvelle image par **${author}** : ${url}` })
+    });
+  } catch (e) {
+    console.warn("Erreur Discord Webhook", e);
   }
+}
 
-  // Envoie URL au webhook Discord
-  async function sendToDiscord(url, author) {
-    try {
-      await fetch(DISCORD_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: `Nouvelle image ajoutée par **${author}** : ${url}`
-        })
-      });
-    } catch (e) {
-      console.warn("Erreur en envoyant au webhook Discord", e);
-    }
-  }
+async function addImage() {
+  const author = document.getElementById('new-author').value.trim();
+  if (!droppedImage || !author) return alert("Image et auteur requis");
+  addBtn.disabled = true;
+  dropZone.textContent = "Upload en cours...";
 
-  // Ajouter image dans la galerie
-  async function addImage() {
-    const author = document.getElementById('new-author').value.trim();
-    if (!droppedImage) {
-      alert("Dépose une image avant d'ajouter.");
-      return;
-    }
-    if (!author) {
-      alert("Entre un nom d'auteur.");
-      return;
-    }
+  const uploadedUrl = await uploadToImgur(droppedImage);
+  if (!uploadedUrl) return alert("Erreur lors de l'upload");
+  images.push({ url: uploadedUrl, author });
+  comments[uploadedUrl] = [];
+  currentIndex = images.length - 1;
+  localStorage.setItem("images", JSON.stringify(images));
+  localStorage.setItem("comments", JSON.stringify(comments));
+  await sendToDiscord(uploadedUrl, author);
+  droppedImage = null;
+  document.getElementById('new-author').value = '';
+  dropZone.textContent = "Glisse une image ici ou clique pour choisir";
+  render();
+}
 
-    addBtn.disabled = true;
-    dropZone.textContent = "Upload en cours...";
-
-    const uploadedUrl = await uploadToImgur(droppedImage);
-    if (!uploadedUrl) {
-      dropZone.textContent = "Dépose une image ici ou clique pour choisir";
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      droppedImage = reader.result;
+      dropZone.textContent = "Image prête ! Clique sur Ajouter.";
       addBtn.disabled = false;
-      return;
-    }
-    uploadedImageUrl = uploadedUrl;
-    images.push({ url: uploadedUrl, author });
-    comments[uploadedUrl] = [];
-    currentIndex = images.length - 1;
-    await sendToDiscord(uploadedUrl, author);
-    droppedImage = null;
-    uploadedImageUrl = null;
-    document.getElementById('new-author').value = '';
-    dropZone.textContent = "Dépose une image ici ou clique pour choisir";
-    addBtn.disabled = true;
-    render();
+    };
+    reader.readAsDataURL(file);
+  } else {
+    alert("Ce fichier n’est pas une image.");
   }
-
-  // Naviguer pages
-  function prevPage() {
-    if (currentIndex > 0) {
-      currentIndex--;
-      render();
-    }
-  }
-  function nextPage() {
-    if (currentIndex < images.length - 1) {
-      currentIndex++;
-      render();
-    }
-  }
-
-  // Ajouter commentaire
-  function addComment() {
-    const name = document.getElementById('comment-name').value.trim();
-    const text = document.getElementById('comment-text').value.trim();
-    if (!name || !text) return;
-    if (images.length === 0) {
-      alert("Pas d'image pour commenter.");
-      return;
-    }
-    const url = images[currentIndex].url;
-    comments[url].push({ name, text });
-    document.getElementById('comment-name').value = '';
-    document.getElementById('comment-text').value = '';
-    render();
-  }
-
-  // Supprimer image (admin seulement)
-  function deleteImage() {
-    if (!isAdmin) {
-      alert("Action réservée à l'administrateur.");
-      return;
-    }
-    if (images.length === 0) return;
-
-    const url = images[currentIndex].url;
-    images.splice(currentIndex, 1);
-    delete comments[url];
-    if (currentIndex >= images.length) currentIndex = images.length - 1;
-    render();
-  }
-
-  // Drag & Drop gestion
-  dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-  });
-  dropZone.addEventListener('dragleave', e => {
-    dropZone.classList.remove('dragover');
-  });
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
+});
+dropZone.addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = () => {
+    const file = input.files[0];
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -364,55 +300,59 @@
         addBtn.disabled = false;
       };
       reader.readAsDataURL(file);
-    } else {
-      alert("Ce fichier n’est pas une image.");
     }
-  });
+  };
+  input.click();
+});
 
-  // Click sur zone drop pour ouvrir explorateur fichiers
-  dropZone.addEventListener('click', () => {
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = 'image/*';
-    fileInput.onchange = () => {
-      const file = fileInput.files[0];
-      if (file && file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          droppedImage = reader.result;
-          dropZone.textContent = "Image prête ! Clique sur Ajouter.";
-          addBtn.disabled = false;
-        };
-        reader.readAsDataURL(file);
-      } else {
-        alert("Ce fichier n’est pas une image.");
-      }
-    };
-    fileInput.click();
-  });
-
-  // Admin mode Alt+R
-  window.addEventListener('keydown', e => {
-    if (e.altKey && e.key.toLowerCase() === 'r') {
-      const pwd = prompt("Mot de passe admin :");
-      if (pwd === adminPassword) {
-        isAdmin = true;
-        deleteButton.disabled = false;
-        alert("Mode admin activé !");
-        render();
-      } else {
-        alert("Mot de passe incorrect.");
-      }
-    }
-  });
-
-  addBtn.addEventListener('click', addImage);
-  prevBtn.addEventListener('click', prevPage);
-  nextBtn.addEventListener('click', nextPage);
-  commentBtn.addEventListener('click', addComment);
-  deleteButton.addEventListener('click', deleteImage);
-
+function prevPage() {
+  if (currentIndex > 0) currentIndex--;
   render();
+}
+function nextPage() {
+  if (currentIndex < images.length - 1) currentIndex++;
+  render();
+}
+function addComment() {
+  const name = document.getElementById('comment-name').value.trim();
+  const text = document.getElementById('comment-text').value.trim();
+  if (!name || !text || images.length === 0) return;
+  const url = images[currentIndex].url;
+  comments[url].push({ name, text });
+  localStorage.setItem("comments", JSON.stringify(comments));
+  document.getElementById('comment-name').value = '';
+  document.getElementById('comment-text').value = '';
+  render();
+}
+function deleteImage() {
+  if (!isAdmin) return;
+  const url = images[currentIndex].url;
+  images.splice(currentIndex, 1);
+  delete comments[url];
+  if (currentIndex >= images.length) currentIndex = images.length - 1;
+  localStorage.setItem("images", JSON.stringify(images));
+  localStorage.setItem("comments", JSON.stringify(comments));
+  render();
+}
+
+window.addEventListener('keydown', e => {
+  if (e.altKey && e.key.toLowerCase() === 'r') {
+    const pwd = prompt("Mot de passe admin :");
+    if (pwd === adminPassword) {
+      isAdmin = true;
+      alert("Mode admin activé !");
+      render();
+    }
+  }
+});
+
+addBtn.addEventListener('click', addImage);
+prevBtn.addEventListener('click', prevPage);
+nextBtn.addEventListener('click', nextPage);
+commentBtn.addEventListener('click', addComment);
+deleteButton.addEventListener('click', deleteImage);
+
+render();
 </script>
 </body>
 </html>
